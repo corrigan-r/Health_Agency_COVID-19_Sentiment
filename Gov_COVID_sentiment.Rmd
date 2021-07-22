@@ -1,0 +1,109 @@
+---
+title: "Sentiment Analysis of the UK Government's Public Releases for COVID-19"
+author: "R Corrigan"
+date: "7/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+library(dplyr)
+library(ggplot2)
+library(grid)
+library(gtable)
+library(lubridate)
+library(readr)
+
+load("sentiment_uk.RData2")
+```
+
+Text from `r nrow(sentiment_dat_uk)` public releases on the [COVID-19 announcements page](https://www.gov.uk/search/all?level_one_taxon=5b7b9532-a775-4bd2-a3aa-6ce380184b6c&content_purpose_supergroup%5B%5D=news_and_communications&order=updated-newest) of the UK government's website from `r min(sentiment_dat_uk$date)` to `r max(sentiment_dat_uk$date)` was scraped^[Scraping was done with the rvest package] and analyzed for sentiment^[Sentiment analysis used the tidytext package]. Sentiment was positive in all weeks but increased significantly over the time period, as shown in the following plot
+
+### Announcement Frequency
+The following plot stack shows how the number of weekly announcements increased as the infection first began to spread throughout the UK.
+
+```{r sentiment plot}
+covid_deaths <- read_csv("data_2021-Jul-08.csv") %>% 
+  rename(deaths = newDailyNsoDeathsByDeathDate) %>% select(date, deaths) 
+covid_cases <- read_csv("data_2021-Jul-14.csv") %>% 
+  rename(cases = newCasesByPublishDate) %>% select(date, cases)
+
+sent <- sentiment_dat_uk %>% select(date, score) %>% 
+  mutate(date = round_date(date, "week")) %>% 
+  group_by(date) %>% summarize(mean_score = mean(score))
+
+covid_cases_plot <- covid_cases %>% ggplot() + 
+  geom_col(aes(date, cases), fill = "orange") + 
+  xlim(ymd(c("2019-12-01", "2021-07-13"))) + ylab("COVID-19 cases")
+
+covid_deaths_plot <- covid_deaths %>% ggplot() + 
+  geom_col(aes(date, deaths), fill = "darkorange2") + 
+  xlim(ymd(c("2019-12-01", "2021-07-13"))) + ylab("COVID-19 deaths")
+
+sentiment_plot <- sentiment_dat_uk %>% 
+  mutate(date = round_date(date, "week")) %>% group_by(date) %>% 
+  summarize(score = mean(score)) %>% ggplot(aes(date, score)) + 
+  geom_smooth(span = .2) + xlim(ymd(c("2019-12-01", "2021-07-13"))) +
+  ylab("sentiment score")
+
+release_rate_plot <- sentiment_dat_uk %>% 
+  mutate(week = round_date(date, "week")) %>% group_by(week) %>% 
+  summarize(count = n()) %>% 
+  ggplot(aes(week, count)) + geom_col() + 
+  xlim(ymd(c("2019-12-01", "2021-07-11"))) + xlab("date") +
+  ylab("releases/week")
+
+
+g_cases <- ggplotGrob(covid_cases_plot)
+g_deaths <- ggplotGrob(covid_deaths_plot)
+g_frequency <- ggplotGrob(release_rate_plot)
+g_sentiment <- ggplotGrob(sentiment_plot)
+
+g <- rbind(g_frequency, g_cases, g_deaths)
+grid.draw(g)
+```
+
+### Sentiment
+
+Sentiment was analyzed using the AFINN lexicon of tidytext package. Net sentiment for virtually all news releases was found to be neutral or positive. Although `r length(unique(sentiment_dat_uk$organization))` organizations contributed releases to the web page, only a fraction of these contributed routinely. Considering only organizations with at least 10 news releases, the average net sentiment across the organizations was quite variable as shown below:
+
+```{r sentiment by organization}
+sentiment_dat_uk %>% group_by(organization) %>% 
+  summarize(count = n()) %>% # sentiment by organization
+  filter(count > 10) %>% inner_join(sentiment_dat_uk) %>% 
+  group_by(organization) %>% summarize(mean_score = mean(score)) %>% 
+  mutate(organization = reorder(organization, mean_score), 
+         sign = as.character(sign(mean_score))) %>% 
+  ggplot(aes(organization, mean_score, fill = sign)) + 
+  geom_col(show.legend = FALSE) + coord_flip() + ylab("average sentiment score") 
+```
+
+Only the government's Home Office department (responsible for immigration and passports, drugs policy, crime, fire, counter-terrorism and police) had net negative sentiment. All others were positive, except for Public Health England which was neutral overall (i.e., average net sentiment of 0). 
+
+Over the analyzed time period, sentiment of the COVID-19 announcements trended either relatively flat or upward, but not downward. This can be seen in the stacked time series plots for smoothed average sentiment of the news releases and COVID-19 death counts in the UK below. 
+
+```{r plot sentiment and deaths}
+g <- rbind(g_sentiment, g_deaths)
+
+grid.draw(g)
+```
+
+The tidytext AFINN lexicon assigns sentiment integer scores ranging from -5 (monst negative) to +5 (most positive) to words. The plot below shows the five most prevalent words in the public releases assigned to each of the 10 possible sentiment scores.
+
+```{r sentiment contribution plot}
+sentiment_uk %>% group_by(sentiment) %>% slice_max(order_by = n, n=5) %>% 
+  ungroup() %>% mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill = sentiment)) + geom_col(show.legend = FALSE) + 
+  scale_y_log10() + facet_wrap(~sentiment, scales = "free_y") + 
+  labs(
+    y = "Most comon words contributing to each of the 10 sentiment values", 
+    x = NULL) + coord_flip() + 
+  scale_fill_gradient2(low = "#F8766D", mid = "grey88", high =  "#00BFC5")
+
+```
+
+
+Interestingly, the sentiment of the news releases remained stable throughout the waves of infection, and increased during the lulls following both waves. If there was another wave, would the sentiment increase even further after it receded?
+
+As seen from the plot, news releases on the COVID-19 page increased significantly as the first wave of infections swept the UK. 
